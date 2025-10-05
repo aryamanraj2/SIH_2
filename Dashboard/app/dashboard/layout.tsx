@@ -44,7 +44,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         <div className="mt-auto">
           <Button
             variant="secondary"
-            className="w-full justify-start"
+            className="w-full justify-start bg-muted"
             onClick={() => {
               logout()
               router.replace("/login")
