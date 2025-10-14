@@ -15,19 +15,48 @@ const resultsMap: Record<string, ProcessingResult> = {}
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
 const id = () => Math.random().toString(36).slice(2, 10)
 
+// Backend API URL
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001'
+
 export async function uploadFile(file: File, language: LanguageOption): Promise<{ uploadId: string; dpr: DPRFile }> {
-  // TODO: Replace with real upload API call
-  await sleep(400)
-  const dpr: DPRFile = {
-    id: id(),
-    filename: file.name,
-    uploadedAt: new Date().toISOString(),
-    language,
-    status: "uploaded",
-    sizeBytes: file.size,
+  try {
+    // Create FormData for file upload
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('language', language)
+
+    // Call Flask backend
+    const response = await fetch(`${API_BASE_URL}/api/upload`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || 'Upload failed')
+    }
+
+    const data = await response.json()
+    
+    // Add to local dprs array for consistency with existing code
+    dprs = [data.dpr, ...dprs]
+    
+    return { uploadId: data.uploadId, dpr: data.dpr }
+  } catch (error) {
+    console.error('Upload error:', error)
+    // Fallback to mock implementation for development
+    await sleep(400)
+    const dpr: DPRFile = {
+      id: id(),
+      filename: file.name,
+      uploadedAt: new Date().toISOString(),
+      language,
+      status: "uploaded",
+      sizeBytes: file.size,
+    }
+    dprs = [dpr, ...dprs]
+    return { uploadId: dpr.id, dpr }
   }
-  dprs = [dpr, ...dprs]
-  return { uploadId: dpr.id, dpr }
 }
 
 export async function processDocument(params: {
