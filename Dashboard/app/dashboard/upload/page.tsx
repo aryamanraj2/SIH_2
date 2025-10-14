@@ -60,7 +60,7 @@ export default function UploadPage() {
     router.push("/dashboard/results?latest=1")
   }
 
-  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+  function onDrop(e: React.DragEvent<HTMLLabelElement>) {
     e.preventDefault()
     setDragOver(false)
     const f = e.dataTransfer.files?.[0]
@@ -75,7 +75,7 @@ export default function UploadPage() {
   return (
     <div className="grid gap-6">
       <header>
-        <h1 className="text-xl font-medium text-balance">Upload DPR</h1>
+        <h1 className="text-xl font-medium">Upload DPR</h1>
         <p className="text-sm text-muted-foreground">
           Drag and drop your DPR document or choose a file. Processing is simulated.
         </p>
@@ -86,54 +86,103 @@ export default function UploadPage() {
           <CardTitle>File Upload</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4">
-          <div
+          <label
+            htmlFor="file-input"
             onDragOver={(e) => {
               e.preventDefault()
               setDragOver(true)
             }}
             onDragLeave={() => setDragOver(false)}
             onDrop={onDrop}
-            className={`border border-dashed rounded p-8 text-center transition-colors ${dragOver ? "bg-secondary" : ""}`}
-            role="button"
+            className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer ${
+              dragOver ? "bg-secondary border-primary" : "border-border hover:bg-secondary/50"
+            }`}
             aria-label="Upload zone"
           >
-            <p className="text-sm text-muted-foreground">Drag & drop your file here</p>
-            <p className="text-xs text-muted-foreground">or</p>
-            <label className="inline-block mt-2">
-              <span className="sr-only">Choose file</span>
-              <Input type="file" onChange={onPick} className="cursor-pointer" />
-            </label>
-            {file && (
-              <p className="mt-2 text-sm">
-                Selected: <span className="font-medium">{file.name}</span>
-              </p>
-            )}
-          </div>
+            <svg
+              className="w-10 h-10 text-muted-foreground mb-2"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+              />
+            </svg>
+            <p className="text-sm text-muted-foreground">
+              {file ? (
+                <span className="font-medium text-foreground">{file.name}</span>
+              ) : (
+                <>
+                  <span className="font-medium text-primary">Choose a file</span> or drag it here
+                </>
+              )}
+            </p>
+            
+          </label>
+          <input
+            id="file-input"
+            type="file"
+            onChange={onPick}
+            className="hidden"
+            accept=".pdf,.doc,.docx"
+          />
 
-          <div className="grid gap-2">
-            <Label>Language</Label>
-            <div className="flex items-center gap-3">
-              <LangOption label="EN" value="EN" current={language} onChange={setLanguage} />
-              <LangOption label="HI" value="HI" current={language} onChange={setLanguage} />
-              <LangOption label="Regional" value="Regional" current={language} onChange={setLanguage} />
-            </div>
-          </div>
+          <Button onClick={handleUpload} disabled={!canSubmit} className="w-full">
+            Upload & Analyze
+          </Button>
 
-          <div className="flex items-center gap-3">
-            <Button onClick={handleUpload} disabled={!canSubmit}>
-              Upload & Analyze
-            </Button>
-            {busy && (
-              <div className="flex-1 flex items-center gap-3" role="status" aria-live="polite">
-                <Progress value={progress} className="w-full" />
-                <span className="text-xs text-muted-foreground">{steps[currentStep]}</span>
+          {busy && (
+            <div className="grid gap-2 p-4 bg-muted rounded-lg" role="status" aria-live="polite">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">{steps[currentStep]}</span>
+                <span className="text-muted-foreground">{progress}%</span>
               </div>
-            )}
-          </div>
-
-          <Stepper currentStep={currentStep} />
+              <Progress value={progress} className="h-2" />
+            </div>
+          )}
         </CardContent>
       </Card>
+
+      {busy && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Processing Pipeline</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-2">
+              {steps.map((label, i) => (
+                <div
+                  key={label}
+                  className={`flex items-center gap-3 p-2 rounded-md transition-colors ${
+                    i === currentStep
+                      ? "bg-secondary"
+                      : i < currentStep
+                        ? "text-muted-foreground"
+                        : "text-muted-foreground/50"
+                  }`}
+                >
+                  <span
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
+                      i < currentStep
+                        ? "bg-primary text-primary-foreground"
+                        : i === currentStep
+                          ? "bg-primary/20 text-primary"
+                          : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {i < currentStep ? "✓" : i + 1}
+                  </span>
+                  <span className="text-sm">{label}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 
@@ -142,48 +191,4 @@ export default function UploadPage() {
     setProgress(toProgress)
     await new Promise((res) => setTimeout(res, 500))
   }
-}
-
-function LangOption({
-  label,
-  value,
-  current,
-  onChange,
-}: { label: string; value: LanguageOption; current: LanguageOption; onChange: (v: LanguageOption) => void }) {
-  const active = current === value
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(value)}
-      className={`px-3 py-1 rounded border text-sm transition-colors ${active ? "bg-secondary" : "hover:bg-secondary"}`}
-      aria-pressed={active}
-    >
-      {label}
-    </button>
-  )
-}
-
-function Stepper({ currentStep }: { currentStep: number }) {
-  return (
-    <ol className="grid gap-2 text-sm">
-      {[
-        "Select Language",
-        "Document Processing (OCR + NLP)",
-        "Component Validation",
-        "Scoring & Eligibility",
-        "Consistency & Risk",
-        "Impact & Final Score",
-        "Results Ready",
-      ].map((label, i) => (
-        <li key={label} className="flex items-center gap-2">
-          <span
-            className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] border ${i <= currentStep ? "bg-secondary" : ""}`}
-          >
-            {i + 1}
-          </span>
-          <span className={i <= currentStep ? "text-foreground" : "text-muted-foreground"}>{label}</span>
-        </li>
-      ))}
-    </ol>
-  )
 }
