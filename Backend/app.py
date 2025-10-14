@@ -27,14 +27,17 @@ CORS(app)  # Enable CORS for all routes
 
 # Configuration
 UPLOAD_FOLDER = 'Uploads'
+RESULTS_FOLDER = 'Results'
 ALLOWED_EXTENSIONS = {'pdf'}
 MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file size
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['RESULTS_FOLDER'] = RESULTS_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
-# Ensure upload directory exists
+# Ensure upload and results directories exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(RESULTS_FOLDER, exist_ok=True)
 
 # Initialize analyzers
 risk_analyzer = None
@@ -71,6 +74,70 @@ def find_uploaded_file(upload_id):
             except:
                 continue
     return None
+
+def process_and_store_results(upload_id, pdf_file_path, original_filename):
+    """Process PDF with both analyzers and store results"""
+    try:
+        results = {
+            'uploadId': upload_id,
+            'originalFilename': original_filename,
+            'processedAt': datetime.now().isoformat(),
+            'status': 'completed'
+        }
+        
+        # Risk analysis
+        if RISK_ANALYZER_AVAILABLE and risk_analyzer:
+            try:
+                print(f"Running risk analysis for {original_filename}...")
+                risk_analysis = risk_analyzer.analyze_dpr_pdf(pdf_file_path)
+                results['riskAnalysis'] = risk_analysis
+                print("Risk analysis completed successfully")
+            except Exception as e:
+                print(f"Risk analysis failed: {e}")
+                results['riskAnalysis'] = {'error': str(e)}
+        else:
+            results['riskAnalysis'] = {'error': 'Risk analyzer not available'}
+        
+        # Score analysis
+        if SCORER_AVAILABLE and dpr_scorer:
+            try:
+                print(f"Running DPR scoring for {original_filename}...")
+                score_analysis = dpr_scorer.calculate_total_score(pdf_file_path)
+                results['scoreAnalysis'] = score_analysis
+                print("DPR scoring completed successfully")
+            except Exception as e:
+                print(f"DPR scoring failed: {e}")
+                results['scoreAnalysis'] = {'error': str(e)}
+        else:
+            results['scoreAnalysis'] = {'error': 'DPR scorer not available'}
+        
+        # Store results in JSON file
+        results_file = os.path.join(app.config['RESULTS_FOLDER'], f"{upload_id}_results.json")
+        with open(results_file, 'w') as f:
+            json.dump(results, f, indent=2)
+        
+        print(f"Results stored in: {results_file}")
+        return results
+        
+    except Exception as e:
+        print(f"Error processing and storing results: {e}")
+        error_results = {
+            'uploadId': upload_id,
+            'originalFilename': original_filename,
+            'processedAt': datetime.now().isoformat(),
+            'status': 'error',
+            'error': str(e)
+        }
+        
+        # Store error results
+        try:
+            results_file = os.path.join(app.config['RESULTS_FOLDER'], f"{upload_id}_results.json")
+            with open(results_file, 'w') as f:
+                json.dump(error_results, f, indent=2)
+        except:
+            pass
+        
+        return error_results
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
@@ -120,6 +187,10 @@ def upload_file():
             with open(metadata_path, 'w') as f:
                 json.dump(metadata, f)
             
+            # Automatically process the PDF with both analyzers
+            print(f"Starting automatic analysis for {original_filename}...")
+            analysis_results = process_and_store_results(upload_id, file_path, original_filename)
+            
             response_data = {
                 'uploadId': upload_id,
                 'dpr': {
@@ -127,16 +198,18 @@ def upload_file():
                     'filename': original_filename,
                     'uploadedAt': datetime.now().isoformat(),
                     'language': language,
-                    'status': 'uploaded',
+                    'status': 'analyzed',  # Changed from 'uploaded' to 'analyzed'
                     'sizeBytes': os.path.getsize(file_path),
                     'storedAs': unique_filename,
                     'filePath': file_path,
                     'analysisEndpoints': {
                         'risk': f'/api/analyze/risk/{upload_id}',
                         'score': f'/api/analyze/score/{upload_id}',
-                        'complete': f'/api/analyze/complete/{upload_id}'
+                        'complete': f'/api/analyze/complete/{upload_id}',
+                        'results': f'/api/results/{upload_id}'
                     }
-                }
+                },
+                'analysisResults': analysis_results  # Include the analysis results in response
             }
             
             return jsonify(response_data), 200
@@ -254,6 +327,86 @@ def analyze_complete(upload_id):
         print(f"Complete analysis error: {e}")
         print(traceback.format_exc())
         return jsonify({'error': f'Complete analysis failed: {str(e)}'}), 500
+
+@app.route('/api/results/<upload_id>', methods=['GET'])
+def get_results(upload_id):
+    """Retrieve stored analysis results for a specific upload"""
+    try:
+        results_file = os.path.join(app.config['RESULTS_FOLDER'], f"{upload_id}_results.json")
+        
+        if not os.path.exists(results_file):
+            return jsonify({'error': 'Results not found for the given upload ID'}), 404
+        
+        with open(results_file, 'r') as f:
+            results = json.load(f)
+        
+        return jsonify(results), 200
+        
+    except Exception as e:
+        print(f"Error retrieving results: {e}")
+        return jsonify({'error': f'Failed to retrieve results: {str(e)}'}), 500
+
+@app.route('/api/results', methods=['GET'])
+def list_all_results():
+    """List all stored analysis results"""
+    try:
+        results_list = []
+        
+        if not os.path.exists(app.config['RESULTS_FOLDER']):
+            return jsonify({'results': []}), 200
+        
+        for filename in os.listdir(app.config['RESULTS_FOLDER']):
+            if filename.endswith('_results.json'):
+                try:
+                    filepath = os.path.join(app.config['RESULTS_FOLDER'], filename)
+                    with open(filepath, 'r') as f:
+                        result_data = json.load(f)
+                    
+                    # Extract summary info
+                    summary = {
+                        'uploadId': result_data.get('uploadId'),
+                        'originalFilename': result_data.get('originalFilename'),
+                        'processedAt': result_data.get('processedAt'),
+                        'status': result_data.get('status'),
+                        'hasRiskAnalysis': 'riskAnalysis' in result_data and 'error' not in result_data.get('riskAnalysis', {}),
+                        'hasScoreAnalysis': 'scoreAnalysis' in result_data and 'error' not in result_data.get('scoreAnalysis', {}),
+                    }
+                    
+                    # Add score percentage if available
+                    if summary['hasScoreAnalysis']:
+                        score_data = result_data.get('scoreAnalysis', {})
+                        summary['scorePercentage'] = score_data.get('percentage', 0)
+                        summary['totalScore'] = score_data.get('total_score', 0)
+                    
+                    results_list.append(summary)
+                except Exception as e:
+                    print(f"Error reading result file {filename}: {e}")
+                    continue
+        
+        # Sort by processed date (newest first)
+        results_list.sort(key=lambda x: x.get('processedAt', ''), reverse=True)
+        
+        return jsonify({'results': results_list}), 200
+        
+    except Exception as e:
+        print(f"Error listing results: {e}")
+        return jsonify({'error': f'Failed to list results: {str(e)}'}), 500
+
+@app.route('/api/results/<upload_id>', methods=['DELETE'])
+def delete_results(upload_id):
+    """Delete stored analysis results for a specific upload"""
+    try:
+        results_file = os.path.join(app.config['RESULTS_FOLDER'], f"{upload_id}_results.json")
+        
+        if not os.path.exists(results_file):
+            return jsonify({'error': 'Results not found for the given upload ID'}), 404
+        
+        os.remove(results_file)
+        return jsonify({'message': 'Results deleted successfully'}), 200
+        
+    except Exception as e:
+        print(f"Error deleting results: {e}")
+        return jsonify({'error': f'Failed to delete results: {str(e)}'}), 500
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
