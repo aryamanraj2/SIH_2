@@ -664,7 +664,7 @@ def delete_results(upload_id):
         except Exception as e:
             print(f"Warning: Error deleting physical files: {e}")
         
-        # Delete from database (cascade will handle related records)
+        # Delete from database (cascade will handle related records including archived_files)
         db.session.delete(upload)
         db.session.commit()
         

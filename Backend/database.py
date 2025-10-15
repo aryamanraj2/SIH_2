@@ -28,6 +28,9 @@ class Upload(db.Model):
     # Relationship with results
     results = db.relationship('AnalysisResult', backref='upload', cascade='all, delete-orphan')
     
+    # Relationship with archived files
+    archived_files = db.relationship('ArchivedFile', backref='upload', cascade='all, delete-orphan')
+    
     def to_dict(self):
         """Convert model to dictionary"""
         return {
@@ -85,7 +88,7 @@ class ArchivedFile(db.Model):
     __tablename__ = 'archived_files'
     
     id = db.Column(db.Integer, primary_key=True)
-    upload_id = db.Column(db.String(36), db.ForeignKey('uploads.upload_id'), nullable=False, index=True)
+    upload_id = db.Column(db.String(36), db.ForeignKey('uploads.upload_id', ondelete='CASCADE'), nullable=False, index=True)
     archived_at = db.Column(db.DateTime, default=datetime.utcnow)
     archived_by = db.Column(db.String(100))  # For future user management
     archive_reason = db.Column(db.String(255))

@@ -32,6 +32,7 @@ export default function ResultsPage() {
   const [fetchedDpr, setFetchedDpr] = useState<DPRFile | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [initialLoad, setInitialLoad] = useState(true)
   
   // Try to find cached result and DPR first
   const cachedResult = id ? results[id] : undefined
@@ -40,30 +41,90 @@ export default function ResultsPage() {
   // Use cached data if available, otherwise use fetched data
   const result = cachedResult || fetchedResult
   const dpr = cachedDpr || fetchedDpr
+  
+  // Debug logging to track data flow
+  console.log('🔍 Data Flow Debug:', {
+    id,
+    hasResult: !!result,
+    hasDpr: !!dpr,
+    loading,
+    initialLoad,
+    error,
+    fetchedResult: !!fetchedResult,
+    fetchedDpr: !!fetchedDpr,
+    cachedResult: !!cachedResult,
+    cachedDpr: !!cachedDpr
+  })
 
   // Fetch results if not cached and ID is provided
   useEffect(() => {
-    if (!id || cachedResult || loading) return
+    if (!id) {
+      setInitialLoad(false)
+      return
+    }
+    
+    if (cachedResult) {
+      setInitialLoad(false)
+      return
+    }
+    
+    if (loading) return
     
     const fetchResultsData = async () => {
       setLoading(true)
       setError(null)
       
       try {
-        // Fetch the result using the uploadId
-        const resultData = await getResults(id)
-        setFetchedResult(resultData)
+        console.log('🔍 Starting fetch for ID:', id)
         
-        // Try to get DPR info from the API (including archived files)
+        // First, try to fetch the DPR list to see if this ID exists
+        console.log('📋 Fetching DPR list with archived files...')
         const allDprs = await listDprs({ includeArchived: true })
+        console.log('📋 DPR list received:', allDprs.length, 'files')
+        
         const matchingDpr = allDprs.find(d => d.uploadId === id || d.id === id)
-        setFetchedDpr(matchingDpr || null)
+        console.log('🎯 Matching DPR:', matchingDpr ? matchingDpr.filename : 'Not found')
+        
+        if (!matchingDpr) {
+          // If not found in list, try to fetch results directly - maybe it's a valid uploadId
+          console.log('⚠️ DPR not found in list, trying direct results fetch...')
+          const resultData = await getResults(id)
+          if (resultData) {
+            console.log('✅ Direct results fetch successful')
+            setFetchedResult(resultData)
+            // Create a minimal DPR object for display
+            setFetchedDpr({
+              id: id,
+              uploadId: id,
+              filename: 'Unknown File',
+              originalFilename: 'Unknown File',
+              uploadedAt: new Date().toISOString(),
+              language: 'EN',
+              status: 'completed',
+              sizeBytes: 0,
+              isArchived: false
+            })
+          } else {
+            throw new Error(`No DPR file or results found with ID: ${id}`)
+          }
+        } else {
+          setFetchedDpr(matchingDpr)
+          
+          // Then fetch the results using the uploadId
+          console.log('📊 Fetching results for uploadId:', matchingDpr.uploadId || id)
+          const resultData = await getResults(matchingDpr.uploadId || id)
+          console.log('📊 Results fetch:', resultData ? 'Success' : 'Failed')
+          setFetchedResult(resultData)
+        }
+        
+        console.log('✅ Fetch process completed successfully')
         
       } catch (err) {
-        console.error('Error fetching results:', err)
+        console.error('❌ Error fetching results:', err)
         setError(err instanceof Error ? err.message : 'Failed to fetch results')
       } finally {
         setLoading(false)
+        setInitialLoad(false)
       }
     }
     
@@ -79,10 +140,21 @@ export default function ResultsPage() {
     
     const fetchEnhancedData = async () => {
       try {
-        const response = await fetch(`http://localhost:5001/api/results/${id}`)
+        // Use the DPR's uploadId if available, otherwise use the provided id
+        const uploadId = dpr?.uploadId || id
+        console.log('🚀 Fetching enhanced data for uploadId:', uploadId)
+        const response = await fetch(`http://localhost:5001/api/results/${uploadId}`)
+        console.log('📡 Enhanced API response status:', response.status)
         if (response.ok) {
           const data = await response.json()
+          console.log('✅ Enhanced data received:', { 
+            hasScoreAnalysis: !!data.scoreAnalysis,
+            hasRiskAnalysis: !!data.riskAnalysis,
+            filename: data.originalFilename
+          })
           setEnhancedApiResult(data)
+        } else {
+          console.warn(`Enhanced data not available for ${uploadId}, status: ${response.status}`)
         }
       } catch (error) {
         console.error('Error fetching enhanced data:', error)
@@ -90,7 +162,7 @@ export default function ResultsPage() {
     }
     
     fetchEnhancedData()
-  }, [id])
+  }, [id, dpr])
 
   // Convert real API result to enhanced result format
   const enhancedResult = useMemo((): EnhancedProcessingResult | null => {
@@ -133,11 +205,29 @@ export default function ResultsPage() {
     ]
   }, [result])
 
-  if (!id || !dpr) {
+  if (!id) {
     return (
       <div className="grid gap-4">
         <h1 className="text-xl font-medium">Results</h1>
         <p className="text-sm text-muted-foreground">No results found. Upload a DPR to see analysis.</p>
+      </div>
+    )
+  }
+
+  if (!dpr && initialLoad) {
+    return (
+      <div className="grid gap-4">
+        <h1 className="text-xl font-medium">Loading Results...</h1>
+        <p className="text-sm text-muted-foreground">Fetching analysis results, please wait.</p>
+      </div>
+    )
+  }
+
+  if (!dpr && !initialLoad) {
+    return (
+      <div className="grid gap-4">
+        <h1 className="text-xl font-medium">Results</h1>
+        <p className="text-sm text-muted-foreground">No DPR file found for this analysis.</p>
       </div>
     )
   }
@@ -158,12 +248,13 @@ export default function ResultsPage() {
     URL.revokeObjectURL(url)
   }
 
-  // Show loading state
-  if (loading) {
+  // Show loading state only when actually loading (not on initial render)
+  if (loading && !cachedResult && !error) {
     return (
       <div className="grid gap-4">
         <h1 className="text-xl font-medium">Loading Results...</h1>
         <p className="text-sm text-muted-foreground">Fetching analysis results, please wait.</p>
+        <p className="text-xs text-gray-400">Looking for ID: {id}</p>
       </div>
     )
   }
@@ -182,7 +273,7 @@ export default function ResultsPage() {
   }
 
   // Show enhanced results if available, otherwise fallback to basic
-  if (enhancedResult) {
+  if (enhancedResult && dpr) {
     return (
       <div className="grid gap-8 pb-8">
         {/* Enhanced Score Overview */}
@@ -226,7 +317,7 @@ export default function ResultsPage() {
 
           {/* Categories Tab */}
           <TabsContent value="categories" className="space-y-6">
-            <div className="grid gap-6 lg:grid-cols-2">
+            <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-2">
               {enhancedResult.breakdown ? Object.entries(enhancedResult.breakdown).map(([category, result]) => 
                 result ? (
                   <CategoryScoreCard
@@ -252,7 +343,7 @@ export default function ResultsPage() {
 
           {/* Risks Tab */}
           <TabsContent value="risks" className="space-y-6">
-            {enhancedApiResult?.riskAnalysis ? (
+            {enhancedApiResult?.riskAnalysis && dpr ? (
               <RiskAnalysis
                 riskAnalysis={enhancedApiResult.riskAnalysis}
                 filename={dpr.filename}
@@ -269,10 +360,10 @@ export default function ResultsPage() {
 
         {/* Export Actions */}
         <div className="flex flex-wrap items-center gap-3 pt-4 border-t">
-          <Button variant="default" onClick={() => exportPDF(dpr.id)}>
+          <Button variant="default" onClick={() => dpr && exportPDF(dpr.id)}>
             📄 Export Enhanced PDF
           </Button>
-          <Button variant="secondary" onClick={() => exportExcel(dpr.id)}>
+          <Button variant="secondary" onClick={() => dpr && exportExcel(dpr.id)}>
             📊 Export Excel
           </Button>
           <Button variant="outline" onClick={handleEnhancedExportJSON}>
@@ -284,7 +375,7 @@ export default function ResultsPage() {
   }
 
   // Fallback to basic results if enhanced not available
-  if (!result) {
+  if (!result || !dpr) {
     return (
       <div className="grid gap-4">
         <h1 className="text-xl font-medium">Results</h1>

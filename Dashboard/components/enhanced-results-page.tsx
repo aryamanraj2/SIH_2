@@ -175,7 +175,7 @@ export default function EnhancedResultsPage() {
 
         {/* Categories Tab - Individual Score Cards */}
         <TabsContent value="categories" className="space-y-6">
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-2">
             {Object.entries(enhancedResult.breakdown).map(([category, result]) => (
               <CategoryScoreCard
                 key={category}

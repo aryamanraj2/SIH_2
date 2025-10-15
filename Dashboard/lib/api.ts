@@ -186,6 +186,9 @@ export async function getResults(dprId: string): Promise<ProcessingResult | null
     const data = await response.json()
     
     // Transform backend data to frontend format
+    const scoreAnalysis = data.scoreAnalysis
+    const breakdown = scoreAnalysis?.breakdown || {}
+    
     const result: ProcessingResult = {
       validation: {
         projectProfile: { geoCoordinates: true, timeline: true },
@@ -195,12 +198,12 @@ export async function getResults(dprId: string): Promise<ProcessingResult | null
         certificates: { landAvailability: true, nonDuplication: true }
       },
       scores: {
-        completeness: data.scoreAnalysis?.completeness_score || 0,
-        compliance: data.scoreAnalysis?.compliance_score || 0,
-        technicalQuality: data.scoreAnalysis?.technical_score || 0,
-        impactSustainability: data.scoreAnalysis?.impact_score || 0,
-        total: data.scoreAnalysis?.total_score || 0,
-        grade: getGradeFromScore(data.scoreAnalysis?.total_score || 0)
+        completeness: breakdown.completeness?.score || 0,
+        compliance: breakdown.compliance?.score || 0,
+        technicalQuality: breakdown.technical_quality?.score || breakdown.gatishakti_alignment?.score || 0,
+        impactSustainability: breakdown.impact_sustainability?.score || 0,
+        total: scoreAnalysis?.total_score || 0,
+        grade: getGradeFromScore(scoreAnalysis?.total_score || 0)
       },
       eligibility: {
         sizeCheckOk: true,
@@ -216,7 +219,7 @@ export async function getResults(dprId: string): Promise<ProcessingResult | null
         delayRisk: parseRiskScore(data.riskAnalysis?.overallRiskScore),
         implementationRisk: parseRiskScore(data.riskAnalysis?.overallRiskScore)
       },
-      recommendations: data.riskAnalysis?.recommendations || []
+      recommendations: generateRecommendationsFromRisk(data.riskAnalysis)
     }
     
     return result
@@ -369,6 +372,37 @@ function parseRiskScore(riskScore?: string): number {
   if (riskScore.toLowerCase().includes('low')) return 0.2
   
   return 0.5
+}
+
+function generateRecommendationsFromRisk(riskAnalysis: any): string[] {
+  if (!riskAnalysis || !riskAnalysis.riskCategories) {
+    return ["Complete project analysis to generate specific recommendations."]
+  }
+  
+  const recommendations: string[] = []
+  
+  riskAnalysis.riskCategories.forEach((category: any) => {
+    const categoryName = category.categoryName?.toLowerCase() || ''
+    const score = parseFloat(category.score?.split('/')[0] || '0')
+    
+    if (score >= 7) {
+      if (categoryName.includes('cost')) {
+        recommendations.push("Address cost estimation gaps and establish contingency provisions.")
+      } else if (categoryName.includes('delay')) {
+        recommendations.push("Implement timeline management and secure statutory clearances.")
+      } else if (categoryName.includes('implementation')) {
+        recommendations.push("Establish monitoring mechanisms and KPI tracking systems.")
+      } else if (categoryName.includes('sustainability')) {
+        recommendations.push("Develop comprehensive O&M plans and stakeholder engagement strategies.")
+      }
+    }
+  })
+  
+  if (recommendations.length === 0) {
+    recommendations.push("Maintain current project standards and continue regular monitoring.")
+  }
+  
+  return recommendations
 }
 
 function score(flags: boolean[], outOf: number) {

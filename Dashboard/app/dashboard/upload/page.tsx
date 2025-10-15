@@ -14,7 +14,6 @@ import * as api from "@/lib/api"
 import type { LanguageOption } from "@/lib/types"
 
 const steps = [
-  "Select Language",
   "Document Processing (OCR + NLP)",
   "Component Validation",
   "Scoring & Eligibility",
@@ -39,22 +38,22 @@ export default function UploadPage() {
     if (!file) return
     setBusy(true)
     setCurrentStep(0)
-    setProgress(5)
+    setProgress(10)
 
     const { uploadId, dpr } = await api.uploadFile(file, language)
     addDpr({ ...dpr, status: "processing" })
 
     // Simulate step progression matching the mermaid flow
-    await tick(1, 25) // Document Processing
-    await tick(2, 45) // Component Validation
-    await tick(3, 65) // Scoring & Eligibility
-    await tick(4, 80) // Consistency & Risk
-    await tick(5, 92) // Impact & Final Score
+    await tick(0, 20) // Document Processing
+    await tick(1, 40) // Component Validation
+    await tick(2, 60) // Scoring & Eligibility
+    await tick(3, 75) // Consistency & Risk
+    await tick(4, 90) // Impact & Final Score
 
     // Get final results
     const result = await api.processDocument({ uploadId, language })
     setResult(uploadId, result)
-    await tick(6, 100) // Results Ready
+    await tick(5, 100) // Results Ready
 
     setBusy(false)
     router.push("/dashboard/results?latest=1")
