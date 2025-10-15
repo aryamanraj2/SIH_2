@@ -1,0 +1,20 @@
+# Core Flask dependencies - MINIMAL WORKING SET
+Flask==3.0.0
+Flask-CORS==4.0.0
+Werkzeug==3.0.1
+python-dotenv==1.0.0
+psycopg2-binary==2.9.9
+Flask-SQLAlchemy==3.1.1
+
+# Basic PDF processing
+pypdf==5.1.0
+pydantic==2.9.2
+PyMuPDF==1.23.14
+
+# Basic AI dependencies
+google-genai==0.7.0
+torch==1.13.1
+rapidfuzz==2.13.7
+
+# Basic utilities
+numpy==1.21.6

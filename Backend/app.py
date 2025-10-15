@@ -28,11 +28,19 @@ except ImportError as e:
     RISK_ANALYZER_AVAILABLE = False
 
 try:
-    from dpr_scorer import DPRScorer
-    SCORER_AVAILABLE = True
+    from integrated_dpr_analysis import create_dpr_analyzer
+    INTEGRATED_ANALYSIS_AVAILABLE = True
+    print("✅ Enhanced DPR Analysis System available")
 except ImportError as e:
-    print(f"Warning: DPR scorer not available: {e}")
-    SCORER_AVAILABLE = False
+    print(f"Warning: Enhanced analysis not available: {e}")
+    INTEGRATED_ANALYSIS_AVAILABLE = False
+    try:
+        from dpr_scorer import DPRScorer
+        SCORER_AVAILABLE = True
+        print("📊 Basic DPR Scorer available")
+    except ImportError as e2:
+        print(f"Warning: DPR scorer not available: {e2}")
+        SCORER_AVAILABLE = False
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -65,12 +73,29 @@ if RISK_ANALYZER_AVAILABLE:
     except Exception as e:
         print(f"Failed to initialize risk analyzer: {e}")
 
-if SCORER_AVAILABLE:
+# Initialize the best available DPR analysis system
+dpr_analyzer = None
+if INTEGRATED_ANALYSIS_AVAILABLE:
     try:
+        dpr_analyzer = create_dpr_analyzer()
+        capabilities = dpr_analyzer.get_capabilities()
+        print(f"✅ {capabilities['analysis_type'].title()} DPR Analysis System initialized")
+        print("Available features:")
+        for feature in capabilities['features'][:3]:  # Show first 3 features
+            print(f"  • {feature}")
+    except Exception as e:
+        print(f"Failed to initialize integrated analysis: {e}")
+        INTEGRATED_ANALYSIS_AVAILABLE = False
+
+if not INTEGRATED_ANALYSIS_AVAILABLE and SCORER_AVAILABLE:
+    try:
+        from dpr_scorer import DPRScorer
         dpr_scorer = DPRScorer()
-        print("DPR scorer initialized successfully")
+        print("📊 Basic DPR scorer initialized successfully")
     except Exception as e:
         print(f"Failed to initialize DPR scorer: {e}")
+elif not INTEGRATED_ANALYSIS_AVAILABLE:
+    print("⚠️ No DPR analysis system available")
 
 def allowed_file(filename):
     """Check if the file extension is allowed"""
@@ -113,17 +138,25 @@ def process_and_store_results(upload_id, pdf_file_path, original_filename):
         else:
             risk_analysis = {'error': 'Risk analyzer not available'}
         
-        # Score analysis
-        if SCORER_AVAILABLE and dpr_scorer:
+        # Score analysis using enhanced system
+        if INTEGRATED_ANALYSIS_AVAILABLE and dpr_analyzer:
             try:
-                print(f"Running DPR scoring for {original_filename}...")
-                score_analysis = dpr_scorer.calculate_total_score(pdf_file_path)
-                print("DPR scoring completed successfully")
+                print(f"Running enhanced DPR analysis for {original_filename}...")
+                score_analysis = dpr_analyzer.analyze_dpr(pdf_file_path)
+                print(f"Enhanced DPR analysis completed successfully - Score: {score_analysis.get('percentage', 0):.1f}%")
             except Exception as e:
-                print(f"DPR scoring failed: {e}")
+                print(f"Enhanced DPR analysis failed: {e}")
+                score_analysis = {'error': str(e)}
+        elif hasattr(globals(), 'dpr_scorer') and dpr_scorer:
+            try:
+                print(f"Running basic DPR scoring for {original_filename}...")
+                score_analysis = dpr_scorer.calculate_total_score(pdf_file_path)
+                print("Basic DPR scoring completed successfully")
+            except Exception as e:
+                print(f"Basic DPR scoring failed: {e}")
                 score_analysis = {'error': str(e)}
         else:
-            score_analysis = {'error': 'DPR scorer not available'}
+            score_analysis = {'error': 'No DPR analysis system available'}
         
         # Update analysis result in database
         analysis_result.risk_analysis = risk_analysis
@@ -340,22 +373,29 @@ def analyze_risk(upload_id):
 
 @app.route('/api/analyze/score/<upload_id>', methods=['POST'])
 def analyze_score(upload_id):
-    """Analyze DPR for completeness and scoring"""
+    """Analyze DPR for completeness and scoring using enhanced system"""
     try:
-        if not SCORER_AVAILABLE or not dpr_scorer:
-            return jsonify({'error': 'DPR scorer not available'}), 503
+        # Check availability of analysis systems
+        if not INTEGRATED_ANALYSIS_AVAILABLE and not (hasattr(globals(), 'dpr_scorer') and dpr_scorer):
+            return jsonify({'error': 'No DPR analysis system available'}), 503
         
         # Find the uploaded file using metadata
         pdf_file = find_uploaded_file(upload_id)
         if not pdf_file or not os.path.exists(pdf_file):
             return jsonify({'error': 'File not found for the given upload ID'}), 404
         
-        # Perform scoring analysis
-        score_analysis = dpr_scorer.calculate_total_score(pdf_file)
+        # Perform scoring analysis with enhanced system
+        if INTEGRATED_ANALYSIS_AVAILABLE and dpr_analyzer:
+            score_analysis = dpr_analyzer.analyze_dpr(pdf_file)
+            analysis_type = "enhanced"
+        else:
+            score_analysis = dpr_scorer.calculate_total_score(pdf_file)
+            analysis_type = "basic"
         
         return jsonify({
             'uploadId': upload_id,
             'scoreAnalysis': score_analysis,
+            'analysisType': analysis_type,
             'analyzedAt': datetime.now().isoformat()
         }), 200
         
@@ -388,15 +428,24 @@ def analyze_complete(upload_id):
         else:
             results['riskAnalysis'] = {'error': 'Risk analyzer not available'}
         
-        # Score analysis
-        if SCORER_AVAILABLE and dpr_scorer:
+        # Score analysis using enhanced system
+        if INTEGRATED_ANALYSIS_AVAILABLE and dpr_analyzer:
+            try:
+                score_analysis = dpr_analyzer.analyze_dpr(pdf_file)
+                results['scoreAnalysis'] = score_analysis
+                results['analysisType'] = 'enhanced'
+            except Exception as e:
+                results['scoreAnalysis'] = {'error': str(e)}
+        elif hasattr(globals(), 'dpr_scorer') and dpr_scorer:
             try:
                 score_analysis = dpr_scorer.calculate_total_score(pdf_file)
                 results['scoreAnalysis'] = score_analysis
+                results['analysisType'] = 'basic'
             except Exception as e:
                 results['scoreAnalysis'] = {'error': str(e)}
         else:
-            results['scoreAnalysis'] = {'error': 'DPR scorer not available'}
+            results['scoreAnalysis'] = {'error': 'No DPR analysis system available'}
+            results['analysisType'] = 'none'
         
         return jsonify(results), 200
         
@@ -625,6 +674,50 @@ def delete_results(upload_id):
         print(f"Error deleting upload: {e}")
         db.session.rollback()
         return jsonify({'error': f'Failed to delete upload: {str(e)}'}), 500
+
+@app.route('/api/system/capabilities', methods=['GET'])
+def get_system_capabilities():
+    """Get information about available analysis capabilities"""
+    try:
+        capabilities = {
+            'risk_analysis': {
+                'available': RISK_ANALYZER_AVAILABLE,
+                'type': 'gemini_powered',
+                'features': ['Cost Overrun Risk', 'Delay Risk', 'Implementation Risk', 'Sustainability Risk']
+            },
+            'score_analysis': {
+                'available': INTEGRATED_ANALYSIS_AVAILABLE or (hasattr(globals(), 'dpr_scorer') and dpr_scorer is not None),
+                'type': 'enhanced' if INTEGRATED_ANALYSIS_AVAILABLE else 'basic',
+                'features': []
+            }
+        }
+        
+        if INTEGRATED_ANALYSIS_AVAILABLE and dpr_analyzer:
+            analysis_caps = dpr_analyzer.get_capabilities()
+            capabilities['score_analysis']['features'] = analysis_caps.get('features', [])
+            capabilities['score_analysis']['enhanced_features'] = {
+                'nlp_available': True,
+                'semantic_analysis': True,
+                'gatishakti_alignment': True,
+                'compliance_qa': True,
+                'comprehensive_reporting': True
+            }
+        elif hasattr(globals(), 'dpr_scorer') and dpr_scorer:
+            capabilities['score_analysis']['features'] = [
+                'Basic completeness checking',
+                'Simple technical scoring',
+                'Keyword-based analysis'
+            ]
+        
+        return jsonify({
+            'system': 'Enhanced DPR Analysis System',
+            'version': '2.0',
+            'capabilities': capabilities,
+            'status': 'operational'
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to get capabilities: {str(e)}'}), 500
 
 @app.route('/api/health', methods=['GET'])
 def health_check():

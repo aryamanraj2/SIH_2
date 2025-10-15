@@ -1,0 +1,40 @@
+# Core Flask dependencies
+Flask==3.0.0
+Flask-CORS==4.0.0
+Werkzeug==3.0.1
+python-dotenv==1.0.0
+psycopg2-binary==2.9.9
+Flask-SQLAlchemy==3.1.1
+
+# Basic PDF processing (always required)
+pypdf==5.1.0
+pydantic==2.9.2
+PyMuPDF==1.23.14
+
+# Enhanced PDF processing (optional but recommended)
+pdfplumber==0.11.7
+
+# AI/ML dependencies (conservative versions)
+google-genai==0.7.0
+torch==2.0.1
+sentence-transformers==2.2.2
+rapidfuzz==3.5.2
+
+# Advanced NLP (optional)
+spacy==3.6.1
+# After installation, run: python -m spacy download en_core_web_sm
+
+# Image processing and OCR (optional)
+pytesseract==0.3.10
+pdf2image==1.16.3
+Pillow==10.0.1
+
+# Data processing
+numpy==1.24.4
+pandas==2.0.3
+
+# Utilities
+tqdm==4.66.1
+
+# Google Generative AI (alternative/backup)
+google-generativeai==0.3.2
