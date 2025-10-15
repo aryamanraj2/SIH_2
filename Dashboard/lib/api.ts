@@ -1,5 +1,6 @@
 import type {
   DPRFile,
+  ArchivedFile,
   LanguageOption,
   ProcessingResult,
   ValidationResult,
@@ -122,16 +123,210 @@ export async function processDocument(params: {
   return result
 }
 
-export async function listDPRs(opts?: { q?: string }) {
-  await sleep(150)
-  const q = opts?.q?.toLowerCase().trim()
-  if (!q) return dprs
-  return dprs.filter((d) => d.filename.toLowerCase().includes(q))
+export async function listDPRs(opts?: { q?: string; includeArchived?: boolean }): Promise<DPRFile[]> {
+  try {
+    const params = new URLSearchParams()
+    if (opts?.includeArchived !== undefined) {
+      params.append('include_archived', opts.includeArchived.toString())
+    }
+    
+    const response = await fetch(`${API_BASE_URL}/api/files?${params}`)
+    if (!response.ok) {
+      throw new Error('Failed to fetch files')
+    }
+    
+    const data = await response.json()
+    const files: DPRFile[] = data.files.map((file: any) => ({
+      id: file.uploadId || file.id,
+      uploadId: file.uploadId,
+      filename: file.originalFilename || file.filename,
+      originalFilename: file.originalFilename,
+      uploadedAt: file.uploadedAt,
+      language: file.language || 'EN',
+      status: file.analysisStatus === 'completed' ? 'completed' : 'uploaded',
+      sizeBytes: file.fileSize || file.sizeBytes,
+      fileSize: file.fileSize,
+      isArchived: file.isArchived,
+      hasResults: file.hasResults,
+      analysisStatus: file.analysisStatus,
+      processedAt: file.processedAt,
+      hasRiskAnalysis: file.hasRiskAnalysis,
+      hasScoreAnalysis: file.hasScoreAnalysis,
+      scorePercentage: file.scorePercentage,
+      totalScore: file.totalScore
+    }))
+    
+    // Apply search filter
+    const q = opts?.q?.toLowerCase().trim()
+    if (q) {
+      return files.filter((d) => d.filename.toLowerCase().includes(q))
+    }
+    
+    return files
+  } catch (error) {
+    console.error('Error fetching DPRs:', error)
+    // Fallback to existing mock implementation
+    await sleep(150)
+    const q = opts?.q?.toLowerCase().trim()
+    if (!q) return dprs
+    return dprs.filter((d) => d.filename.toLowerCase().includes(q))
+  }
 }
 
-export async function getResults(dprId: string) {
-  await sleep(150)
-  return resultsMap[dprId]
+export async function getResults(dprId: string): Promise<ProcessingResult | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/results/${dprId}`)
+    if (!response.ok) {
+      if (response.status === 404) {
+        return null
+      }
+      throw new Error('Failed to fetch results')
+    }
+    
+    const data = await response.json()
+    
+    // Transform backend data to frontend format
+    const result: ProcessingResult = {
+      validation: {
+        projectProfile: { geoCoordinates: true, timeline: true },
+        beneficiary: { sdgMpiAligned: true, kpisPresent: true },
+        financial: { gstComponents: true, omFourYears: true },
+        technical: { gatiShaktiAligned: true, sorBasis: true },
+        certificates: { landAvailability: true, nonDuplication: true }
+      },
+      scores: {
+        completeness: data.scoreAnalysis?.completeness_score || 0,
+        compliance: data.scoreAnalysis?.compliance_score || 0,
+        technicalQuality: data.scoreAnalysis?.technical_score || 0,
+        impactSustainability: data.scoreAnalysis?.impact_score || 0,
+        total: data.scoreAnalysis?.total_score || 0,
+        grade: getGradeFromScore(data.scoreAnalysis?.total_score || 0)
+      },
+      eligibility: {
+        sizeCheckOk: true,
+        negativeList: false
+      },
+      flags: {
+        budgetMismatch: false,
+        timelineIssues: false,
+        missingData: false
+      },
+      risk: {
+        costOverrunRisk: parseRiskScore(data.riskAnalysis?.overallRiskScore),
+        delayRisk: parseRiskScore(data.riskAnalysis?.overallRiskScore),
+        implementationRisk: parseRiskScore(data.riskAnalysis?.overallRiskScore)
+      },
+      recommendations: data.riskAnalysis?.recommendations || []
+    }
+    
+    return result
+  } catch (error) {
+    console.error('Error fetching results:', error)
+    // Fallback to existing mock implementation
+    await sleep(150)
+    return resultsMap[dprId] || null
+  }
+}
+
+// Archive Management Functions
+export async function archiveFile(uploadId: string, options?: { reason?: string; archivedBy?: string }): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/archive/${uploadId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        reason: options?.reason || 'User archived',
+        archivedBy: options?.archivedBy || 'user'
+      })
+    })
+    
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || 'Failed to archive file')
+    }
+  } catch (error) {
+    console.error('Error archiving file:', error)
+    throw error
+  }
+}
+
+export async function restoreFile(uploadId: string): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/archive/${uploadId}`, {
+      method: 'DELETE'
+    })
+    
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || 'Failed to restore file')
+    }
+  } catch (error) {
+    console.error('Error restoring file:', error)
+    throw error
+  }
+}
+
+export async function listArchivedFiles(): Promise<ArchivedFile[]> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/archives`)
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch archived files')
+    }
+    
+    const data = await response.json()
+    return data.archives || []
+  } catch (error) {
+    console.error('Error fetching archived files:', error)
+    return []
+  }
+}
+
+export async function downloadFile(uploadId: string): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/download/${uploadId}`)
+    
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || 'Failed to download file')
+    }
+    
+    // Create blob and download
+    const blob = await response.blob()
+    const contentDisposition = response.headers.get('content-disposition')
+    const filename = contentDisposition?.split('filename=')[1]?.replace(/"/g, '') || `file_${uploadId}.pdf`
+    
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.style.display = 'none'
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    window.URL.revokeObjectURL(url)
+    document.body.removeChild(a)
+  } catch (error) {
+    console.error('Error downloading file:', error)
+    throw error
+  }
+}
+
+export async function deleteFile(uploadId: string): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/results/${uploadId}`, {
+      method: 'DELETE'
+    })
+    
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || 'Failed to delete file')
+    }
+  } catch (error) {
+    console.error('Error deleting file:', error)
+    throw error
+  }
 }
 
 export async function exportPDF(dprId: string) {
@@ -147,8 +342,33 @@ export async function exportExcel(dprId: string) {
 }
 
 export async function getJSON(dprId: string) {
-  await sleep(100)
-  return resultsMap[dprId]
+  const result = await getResults(dprId)
+  return result
+}
+
+// Helper functions
+function getGradeFromScore(score: number): "Excellent" | "Good" | "Fair" | "Poor" {
+  if (score >= 90) return "Excellent"
+  if (score >= 75) return "Good"
+  if (score >= 60) return "Fair"
+  return "Poor"
+}
+
+function parseRiskScore(riskScore?: string): number {
+  if (!riskScore) return 0
+  
+  // Extract numeric score from string like "High (8.0/10)"
+  const match = riskScore.match(/\((\d+\.?\d*)/);
+  if (match) {
+    return parseFloat(match[1]) / 10; // Convert to 0-1 scale
+  }
+  
+  // Fallback based on risk level
+  if (riskScore.toLowerCase().includes('high')) return 0.8
+  if (riskScore.toLowerCase().includes('medium')) return 0.5
+  if (riskScore.toLowerCase().includes('low')) return 0.2
+  
+  return 0.5
 }
 
 function score(flags: boolean[], outOf: number) {

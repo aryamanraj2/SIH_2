@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import os
 import uuid
@@ -6,6 +6,18 @@ import json
 from datetime import datetime
 from werkzeug.utils import secure_filename
 import traceback
+import time
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Import database modules
+from database import (
+    db, init_database, Upload, AnalysisResult, ArchivedFile,
+    get_upload_by_id, get_results_by_upload_id, get_all_uploads,
+    get_archived_files, archive_upload, restore_upload, update_archive_access
+)
 
 # Import DPR analysis modules
 try:
@@ -24,6 +36,9 @@ except ImportError as e:
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
+
+# Initialize database
+init_database(app)
 
 # Configuration
 UPLOAD_FOLDER = 'Uploads'
@@ -63,73 +78,101 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def find_uploaded_file(upload_id):
-    """Find uploaded file by upload ID using metadata"""
-    for filename in os.listdir(UPLOAD_FOLDER):
-        if filename.endswith('.meta.json'):
-            try:
-                with open(os.path.join(UPLOAD_FOLDER, filename), 'r') as f:
-                    metadata = json.load(f)
-                    if metadata.get('uploadId') == upload_id:
-                        return metadata.get('filePath')
-            except:
-                continue
+    """Find uploaded file by upload ID using database"""
+    upload = get_upload_by_id(upload_id)
+    if upload and os.path.exists(upload.file_path):
+        return upload.file_path
     return None
 
 def process_and_store_results(upload_id, pdf_file_path, original_filename):
-    """Process PDF with both analyzers and store results"""
+    """Process PDF with both analyzers and store results in database"""
+    start_time = time.time()
+    
     try:
-        results = {
-            'uploadId': upload_id,
-            'originalFilename': original_filename,
-            'processedAt': datetime.now().isoformat(),
-            'status': 'completed'
-        }
+        # Create analysis result record
+        analysis_result = AnalysisResult(
+            upload_id=upload_id,
+            analysis_type='complete',
+            status='pending'
+        )
+        db.session.add(analysis_result)
+        db.session.commit()
+        
+        risk_analysis = None
+        score_analysis = None
         
         # Risk analysis
         if RISK_ANALYZER_AVAILABLE and risk_analyzer:
             try:
                 print(f"Running risk analysis for {original_filename}...")
                 risk_analysis = risk_analyzer.analyze_dpr_pdf(pdf_file_path)
-                results['riskAnalysis'] = risk_analysis
                 print("Risk analysis completed successfully")
             except Exception as e:
                 print(f"Risk analysis failed: {e}")
-                results['riskAnalysis'] = {'error': str(e)}
+                risk_analysis = {'error': str(e)}
         else:
-            results['riskAnalysis'] = {'error': 'Risk analyzer not available'}
+            risk_analysis = {'error': 'Risk analyzer not available'}
         
         # Score analysis
         if SCORER_AVAILABLE and dpr_scorer:
             try:
                 print(f"Running DPR scoring for {original_filename}...")
                 score_analysis = dpr_scorer.calculate_total_score(pdf_file_path)
-                results['scoreAnalysis'] = score_analysis
                 print("DPR scoring completed successfully")
             except Exception as e:
                 print(f"DPR scoring failed: {e}")
-                results['scoreAnalysis'] = {'error': str(e)}
+                score_analysis = {'error': str(e)}
         else:
-            results['scoreAnalysis'] = {'error': 'DPR scorer not available'}
+            score_analysis = {'error': 'DPR scorer not available'}
         
-        # Store results in JSON file
+        # Update analysis result in database
+        analysis_result.risk_analysis = risk_analysis
+        analysis_result.score_analysis = score_analysis
+        analysis_result.status = 'completed'
+        analysis_result.processing_time = time.time() - start_time
+        analysis_result.processed_at = datetime.utcnow()
+        
+        db.session.commit()
+        
+        # Also store in JSON file for backward compatibility
+        results = {
+            'uploadId': upload_id,
+            'originalFilename': original_filename,
+            'processedAt': datetime.utcnow().isoformat(),
+            'status': 'completed',
+            'riskAnalysis': risk_analysis,
+            'scoreAnalysis': score_analysis
+        }
+        
         results_file = os.path.join(app.config['RESULTS_FOLDER'], f"{upload_id}_results.json")
         with open(results_file, 'w') as f:
             json.dump(results, f, indent=2)
         
-        print(f"Results stored in: {results_file}")
+        print(f"Results stored in database and file: {results_file}")
         return results
         
     except Exception as e:
         print(f"Error processing and storing results: {e}")
+        
+        # Update database with error
+        try:
+            analysis_result.status = 'error'
+            analysis_result.error_message = str(e)
+            analysis_result.processing_time = time.time() - start_time
+            analysis_result.processed_at = datetime.utcnow()
+            db.session.commit()
+        except:
+            db.session.rollback()
+        
         error_results = {
             'uploadId': upload_id,
             'originalFilename': original_filename,
-            'processedAt': datetime.now().isoformat(),
+            'processedAt': datetime.utcnow().isoformat(),
             'status': 'error',
             'error': str(e)
         }
         
-        # Store error results
+        # Store error results in file
         try:
             results_file = os.path.join(app.config['RESULTS_FOLDER'], f"{upload_id}_results.json")
             with open(results_file, 'w') as f:
@@ -168,24 +211,39 @@ def upload_file():
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
             file.save(file_path)
             
-            # Generate upload ID and response
-            upload_id = str(uuid.uuid4())
+            # Generate upload ID
+            upload_id = Upload.generate_upload_id()
             
-            # Store metadata for easier lookup
+            # Store upload information in database
+            upload_record = Upload(
+                upload_id=upload_id,
+                original_filename=original_filename,
+                stored_filename=unique_filename,
+                file_path=file_path,
+                file_size=os.path.getsize(file_path),
+                language=language,
+                mime_type='application/pdf'
+            )
+            
+            db.session.add(upload_record)
+            db.session.commit()
+            
+            # Save metadata to JSON file for backward compatibility
             metadata = {
                 'uploadId': upload_id,
                 'originalFilename': original_filename,
                 'storedFilename': unique_filename,
-                'uploadedAt': datetime.now().isoformat(),
+                'uploadedAt': datetime.utcnow().isoformat(),
                 'language': language,
                 'filePath': file_path,
                 'sizeBytes': os.path.getsize(file_path)
             }
             
-            # Save metadata to a JSON file for tracking
             metadata_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{unique_filename}.meta.json")
             with open(metadata_path, 'w') as f:
                 json.dump(metadata, f)
+            
+            print(f"Upload stored in database with ID: {upload_id}")
             
             # Automatically process the PDF with both analyzers
             print(f"Starting automatic analysis for {original_filename}...")
@@ -196,20 +254,23 @@ def upload_file():
                 'dpr': {
                     'id': upload_id,
                     'filename': original_filename,
-                    'uploadedAt': datetime.now().isoformat(),
+                    'uploadedAt': upload_record.uploaded_at.isoformat(),
                     'language': language,
-                    'status': 'analyzed',  # Changed from 'uploaded' to 'analyzed'
-                    'sizeBytes': os.path.getsize(file_path),
+                    'status': 'analyzed',
+                    'sizeBytes': upload_record.file_size,
                     'storedAs': unique_filename,
                     'filePath': file_path,
+                    'isArchived': upload_record.is_archived,
                     'analysisEndpoints': {
                         'risk': f'/api/analyze/risk/{upload_id}',
                         'score': f'/api/analyze/score/{upload_id}',
                         'complete': f'/api/analyze/complete/{upload_id}',
-                        'results': f'/api/results/{upload_id}'
+                        'results': f'/api/results/{upload_id}',
+                        'archive': f'/api/archive/{upload_id}',
+                        'download': f'/api/download/{upload_id}'
                     }
                 },
-                'analysisResults': analysis_results  # Include the analysis results in response
+                'analysisResults': analysis_results
             }
             
             return jsonify(response_data), 200
@@ -219,18 +280,34 @@ def upload_file():
 
 @app.route('/api/files', methods=['GET'])
 def list_files():
-    """List all uploaded files"""
+    """List all uploaded files from database"""
     try:
+        include_archived = request.args.get('include_archived', 'true').lower() == 'true'
+        uploads = get_all_uploads(include_archived=include_archived)
+        
         files = []
-        for filename in os.listdir(UPLOAD_FOLDER):
-            file_path = os.path.join(UPLOAD_FOLDER, filename)
-            if os.path.isfile(file_path):
-                stat = os.stat(file_path)
-                files.append({
-                    'filename': filename,
-                    'size': stat.st_size,
-                    'uploadedAt': datetime.fromtimestamp(stat.st_mtime).isoformat()
-                })
+        for upload in uploads:
+            # Get latest analysis results
+            results = get_results_by_upload_id(upload.upload_id)
+            latest_result = results[-1] if results else None
+            
+            file_data = upload.to_dict()
+            file_data.update({
+                'hasResults': latest_result is not None,
+                'analysisStatus': latest_result.status if latest_result else 'pending',
+                'processedAt': latest_result.processed_at.isoformat() if latest_result and latest_result.processed_at else None,
+                'hasRiskAnalysis': latest_result and latest_result.risk_analysis and 'error' not in latest_result.risk_analysis,
+                'hasScoreAnalysis': latest_result and latest_result.score_analysis and 'error' not in latest_result.score_analysis
+            })
+            
+            # Add score percentage if available
+            if latest_result and latest_result.score_analysis and 'error' not in latest_result.score_analysis:
+                score_data = latest_result.score_analysis
+                file_data['scorePercentage'] = score_data.get('percentage', 0)
+                file_data['totalScore'] = score_data.get('total_score', 0)
+            
+            files.append(file_data)
+        
         return jsonify({'files': files}), 200
     except Exception as e:
         return jsonify({'error': f'Failed to list files: {str(e)}'}), 500
@@ -332,15 +409,43 @@ def analyze_complete(upload_id):
 def get_results(upload_id):
     """Retrieve stored analysis results for a specific upload"""
     try:
-        results_file = os.path.join(app.config['RESULTS_FOLDER'], f"{upload_id}_results.json")
+        # Get upload information
+        upload = get_upload_by_id(upload_id)
+        if not upload:
+            return jsonify({'error': 'Upload not found for the given upload ID'}), 404
         
-        if not os.path.exists(results_file):
+        # Get analysis results
+        results = get_results_by_upload_id(upload_id)
+        if not results:
             return jsonify({'error': 'Results not found for the given upload ID'}), 404
         
-        with open(results_file, 'r') as f:
-            results = json.load(f)
+        # Get the latest/most complete result
+        latest_result = results[-1]
         
-        return jsonify(results), 200
+        # Update archive access tracking if archived
+        if upload.is_archived:
+            update_archive_access(upload_id)
+        
+        response_data = {
+            'uploadId': upload_id,
+            'originalFilename': upload.original_filename,
+            'uploadedAt': upload.uploaded_at.isoformat(),
+            'processedAt': latest_result.processed_at.isoformat() if latest_result.processed_at else None,
+            'status': latest_result.status,
+            'isArchived': upload.is_archived,
+            'processingTime': latest_result.processing_time
+        }
+        
+        if latest_result.risk_analysis:
+            response_data['riskAnalysis'] = latest_result.risk_analysis
+        
+        if latest_result.score_analysis:
+            response_data['scoreAnalysis'] = latest_result.score_analysis
+        
+        if latest_result.error_message:
+            response_data['error'] = latest_result.error_message
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         print(f"Error retrieving results: {e}")
@@ -348,40 +453,39 @@ def get_results(upload_id):
 
 @app.route('/api/results', methods=['GET'])
 def list_all_results():
-    """List all stored analysis results"""
+    """List all stored analysis results from database"""
     try:
+        include_archived = request.args.get('include_archived', 'true').lower() == 'true'
+        uploads = get_all_uploads(include_archived=include_archived)
+        
         results_list = []
-        
-        if not os.path.exists(app.config['RESULTS_FOLDER']):
-            return jsonify({'results': []}), 200
-        
-        for filename in os.listdir(app.config['RESULTS_FOLDER']):
-            if filename.endswith('_results.json'):
-                try:
-                    filepath = os.path.join(app.config['RESULTS_FOLDER'], filename)
-                    with open(filepath, 'r') as f:
-                        result_data = json.load(f)
-                    
-                    # Extract summary info
-                    summary = {
-                        'uploadId': result_data.get('uploadId'),
-                        'originalFilename': result_data.get('originalFilename'),
-                        'processedAt': result_data.get('processedAt'),
-                        'status': result_data.get('status'),
-                        'hasRiskAnalysis': 'riskAnalysis' in result_data and 'error' not in result_data.get('riskAnalysis', {}),
-                        'hasScoreAnalysis': 'scoreAnalysis' in result_data and 'error' not in result_data.get('scoreAnalysis', {}),
-                    }
-                    
-                    # Add score percentage if available
-                    if summary['hasScoreAnalysis']:
-                        score_data = result_data.get('scoreAnalysis', {})
-                        summary['scorePercentage'] = score_data.get('percentage', 0)
-                        summary['totalScore'] = score_data.get('total_score', 0)
-                    
-                    results_list.append(summary)
-                except Exception as e:
-                    print(f"Error reading result file {filename}: {e}")
-                    continue
+        for upload in uploads:
+            # Get latest analysis results
+            results = get_results_by_upload_id(upload.upload_id)
+            if not results:
+                continue
+                
+            latest_result = results[-1]
+            
+            summary = {
+                'uploadId': upload.upload_id,
+                'originalFilename': upload.original_filename,
+                'uploadedAt': upload.uploaded_at.isoformat(),
+                'processedAt': latest_result.processed_at.isoformat() if latest_result.processed_at else None,
+                'status': latest_result.status,
+                'isArchived': upload.is_archived,
+                'hasRiskAnalysis': latest_result.risk_analysis and 'error' not in latest_result.risk_analysis,
+                'hasScoreAnalysis': latest_result.score_analysis and 'error' not in latest_result.score_analysis,
+                'processingTime': latest_result.processing_time
+            }
+            
+            # Add score percentage if available
+            if summary['hasScoreAnalysis']:
+                score_data = latest_result.score_analysis
+                summary['scorePercentage'] = score_data.get('percentage', 0)
+                summary['totalScore'] = score_data.get('total_score', 0)
+            
+            results_list.append(summary)
         
         # Sort by processed date (newest first)
         results_list.sort(key=lambda x: x.get('processedAt', ''), reverse=True)
@@ -392,21 +496,135 @@ def list_all_results():
         print(f"Error listing results: {e}")
         return jsonify({'error': f'Failed to list results: {str(e)}'}), 500
 
-@app.route('/api/results/<upload_id>', methods=['DELETE'])
-def delete_results(upload_id):
-    """Delete stored analysis results for a specific upload"""
+# Archive Management Endpoints
+
+@app.route('/api/archive/<upload_id>', methods=['POST'])
+def archive_file(upload_id):
+    """Archive an uploaded file and its results"""
     try:
-        results_file = os.path.join(app.config['RESULTS_FOLDER'], f"{upload_id}_results.json")
+        data = request.get_json() or {}
+        reason = data.get('reason', 'User archived')
+        archived_by = data.get('archivedBy', 'system')
         
-        if not os.path.exists(results_file):
-            return jsonify({'error': 'Results not found for the given upload ID'}), 404
+        success, message = archive_upload(upload_id, reason, archived_by)
         
-        os.remove(results_file)
-        return jsonify({'message': 'Results deleted successfully'}), 200
+        if success:
+            return jsonify({'message': message}), 200
+        else:
+            return jsonify({'error': message}), 404
         
     except Exception as e:
-        print(f"Error deleting results: {e}")
-        return jsonify({'error': f'Failed to delete results: {str(e)}'}), 500
+        print(f"Error archiving file: {e}")
+        return jsonify({'error': f'Failed to archive file: {str(e)}'}), 500
+
+@app.route('/api/archive/<upload_id>', methods=['DELETE'])
+def restore_file(upload_id):
+    """Restore an archived file"""
+    try:
+        success, message = restore_upload(upload_id)
+        
+        if success:
+            return jsonify({'message': message}), 200
+        else:
+            return jsonify({'error': message}), 404
+        
+    except Exception as e:
+        print(f"Error restoring file: {e}")
+        return jsonify({'error': f'Failed to restore file: {str(e)}'}), 500
+
+@app.route('/api/archives', methods=['GET'])
+def list_archived_files():
+    """List all archived files"""
+    try:
+        archived_data = get_archived_files()
+        
+        archives = []
+        for archive_record, upload in archived_data:
+            # Get analysis results
+            results = get_results_by_upload_id(upload.upload_id)
+            latest_result = results[-1] if results else None
+            
+            archive_info = archive_record.to_dict()
+            archive_info.update({
+                'originalFilename': upload.original_filename,
+                'fileSize': upload.file_size,
+                'uploadedAt': upload.uploaded_at.isoformat(),
+                'hasResults': latest_result is not None,
+                'analysisStatus': latest_result.status if latest_result else 'pending'
+            })
+            
+            archives.append(archive_info)
+        
+        # Sort by archived date (newest first)
+        archives.sort(key=lambda x: x.get('archivedAt', ''), reverse=True)
+        
+        return jsonify({'archives': archives}), 200
+        
+    except Exception as e:
+        print(f"Error listing archived files: {e}")
+        return jsonify({'error': f'Failed to list archived files: {str(e)}'}), 500
+
+@app.route('/api/download/<upload_id>', methods=['GET'])
+def download_file(upload_id):
+    """Download the original uploaded PDF file"""
+    try:
+        upload = get_upload_by_id(upload_id)
+        if not upload:
+            return jsonify({'error': 'File not found'}), 404
+        
+        if not os.path.exists(upload.file_path):
+            return jsonify({'error': 'Physical file not found'}), 404
+        
+        # Update archive access tracking if archived
+        if upload.is_archived:
+            update_archive_access(upload_id)
+        
+        return send_file(
+            upload.file_path,
+            as_attachment=True,
+            download_name=upload.original_filename,
+            mimetype='application/pdf'
+        )
+        
+    except Exception as e:
+        print(f"Error downloading file: {e}")
+        return jsonify({'error': f'Failed to download file: {str(e)}'}), 500
+
+@app.route('/api/results/<upload_id>', methods=['DELETE'])
+def delete_results(upload_id):
+    """Delete upload and all associated data"""
+    try:
+        upload = get_upload_by_id(upload_id)
+        if not upload:
+            return jsonify({'error': 'Upload not found'}), 404
+        
+        # Delete physical files
+        try:
+            if os.path.exists(upload.file_path):
+                os.remove(upload.file_path)
+            
+            # Delete metadata file
+            metadata_file = f"{upload.file_path}.meta.json"
+            if os.path.exists(metadata_file):
+                os.remove(metadata_file)
+            
+            # Delete results file
+            results_file = os.path.join(app.config['RESULTS_FOLDER'], f"{upload_id}_results.json")
+            if os.path.exists(results_file):
+                os.remove(results_file)
+        except Exception as e:
+            print(f"Warning: Error deleting physical files: {e}")
+        
+        # Delete from database (cascade will handle related records)
+        db.session.delete(upload)
+        db.session.commit()
+        
+        return jsonify({'message': 'Upload and all associated data deleted successfully'}), 200
+        
+    except Exception as e:
+        print(f"Error deleting upload: {e}")
+        db.session.rollback()
+        return jsonify({'error': f'Failed to delete upload: {str(e)}'}), 500
 
 @app.route('/api/health', methods=['GET'])
 def health_check():

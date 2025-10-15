@@ -1,14 +1,42 @@
 export type LanguageOption = "EN" | "HI" | "Regional"
 
-export type DprStatus = "uploaded" | "processing" | "completed" | "failed"
+export type DprStatus = "uploaded" | "processing" | "completed" | "failed" | "analyzed"
 
 export interface DPRFile {
   id: string
+  uploadId?: string
   filename: string
+  originalFilename?: string
   uploadedAt: string
   language: LanguageOption
   status: DprStatus
   sizeBytes?: number
+  fileSize?: number
+  isArchived?: boolean
+  hasResults?: boolean
+  analysisStatus?: string
+  processedAt?: string
+  hasRiskAnalysis?: boolean
+  hasScoreAnalysis?: boolean
+  scorePercentage?: number
+  totalScore?: number
+}
+
+export interface ArchivedFile {
+  id: number
+  uploadId: string
+  archivedAt: string
+  archivedBy?: string
+  archiveReason?: string
+  isActive: boolean
+  archiveLocation?: string
+  accessCount: number
+  lastAccessed?: string
+  originalFilename: string
+  fileSize: number
+  uploadedAt: string
+  hasResults: boolean
+  analysisStatus: string
 }
 
 export interface ValidationResult {
