@@ -146,7 +146,7 @@ The backend uses **SQLAlchemy ORM** with a PostgreSQL. Key models are defined in
 - **CORS Protection**: Flask-CORS is configured to restrict cross-origin requests.
 - **Environment Variables**: Sensitive keys and configuration are stored in a `.env` file, not in the codebase.
 
-## 📊 Dashboard Features
+## Dashboard Features
 
 ### Interactive Components
 
