@@ -10,6 +10,7 @@ pypdf==5.1.0
 pydantic==2.9.2
 PyMuPDF==1.23.14
 pdfplumber==0.11.7
+reportlab==4.4.4
 
 # AI/ML dependencies
 google-genai==0.7.0

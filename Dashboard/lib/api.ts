@@ -333,9 +333,41 @@ export async function deleteFile(uploadId: string): Promise<void> {
 }
 
 export async function exportPDF(dprId: string) {
-  // TODO: Connect to backend PDF generation
-  await sleep(200)
-  console.info("[stub] exportPDF called for", dprId)
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/export/pdf/${dprId}`)
+    
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || 'Failed to export PDF')
+    }
+    
+    // Get filename from response header or create default
+    const contentDisposition = response.headers.get('content-disposition')
+    let filename = `${dprId}_analysis_report.pdf`
+    
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/)
+      if (filenameMatch) {
+        filename = filenameMatch[1]
+      }
+    }
+    
+    // Create blob and download
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    
+    console.info("PDF export successful for", dprId)
+  } catch (error) {
+    console.error('Error exporting PDF:', error)
+    throw error
+  }
 }
 
 export async function exportExcel(dprId: string) {

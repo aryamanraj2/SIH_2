@@ -210,9 +210,6 @@ export default function EnhancedResultsPage() {
           <Button variant="default" onClick={() => exportPDF(dpr.id)}>
             📄 Export Enhanced PDF Report
           </Button>
-          <Button variant="secondary" onClick={() => exportExcel(dpr.id)}>
-            📊 Export Excel Analysis
-          </Button>
           <Button variant="outline" onClick={handleExportJSON}>
             📋 Download Enhanced JSON
           </Button>

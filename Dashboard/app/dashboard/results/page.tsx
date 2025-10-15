@@ -361,10 +361,7 @@ export default function ResultsPage() {
         {/* Export Actions */}
         <div className="flex flex-wrap items-center gap-3 pt-4 border-t">
           <Button variant="default" onClick={() => dpr && exportPDF(dpr.id)}>
-            📄 Export Enhanced PDF
-          </Button>
-          <Button variant="secondary" onClick={() => dpr && exportExcel(dpr.id)}>
-            📊 Export Excel
+            📄 Export PDF
           </Button>
           <Button variant="outline" onClick={handleEnhancedExportJSON}>
             📋 Enhanced JSON

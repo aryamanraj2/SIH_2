@@ -719,6 +719,258 @@ def get_system_capabilities():
     except Exception as e:
         return jsonify({'error': f'Failed to get capabilities: {str(e)}'}), 500
 
+@app.route('/api/export/pdf/<upload_id>', methods=['GET'])
+def export_pdf(upload_id):
+    """Generate and download PDF report for analysis results"""
+    try:
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+        from io import BytesIO
+        import tempfile
+        
+        # Get upload and results data
+        upload = get_upload_by_id(upload_id)
+        if not upload:
+            return jsonify({'error': 'Upload not found'}), 404
+        
+        results = get_results_by_upload_id(upload_id)
+        if not results:
+            return jsonify({'error': 'Results not found'}), 404
+        
+        latest_result = results[-1]
+        
+        # Create a temporary file for the PDF
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+        
+        # Create PDF document
+        doc = SimpleDocTemplate(temp_file.name, pagesize=A4)
+        styles = getSampleStyleSheet()
+        story = []
+        
+        # Custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            spaceAfter=30,
+            alignment=TA_CENTER,
+            textColor=colors.darkblue
+        )
+        
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=16,
+            spaceAfter=12,
+            spaceBefore=20,
+            textColor=colors.darkblue
+        )
+        
+        # Title
+        story.append(Paragraph("DPR Analysis Report", title_style))
+        story.append(Spacer(1, 20))
+        
+        # Document Information
+        doc_info = [
+            ['Document Name:', upload.original_filename],
+            ['Upload ID:', upload_id],
+            ['Uploaded At:', upload.uploaded_at.strftime('%Y-%m-%d %H:%M:%S')],
+            ['Analysis Status:', latest_result.status],
+            ['Processing Time:', f"{latest_result.processing_time:.2f}s" if latest_result.processing_time else "N/A"]
+        ]
+        
+        doc_table = Table(doc_info, colWidths=[2*inch, 4*inch])
+        doc_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+            ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+            ('BACKGROUND', (1, 0), (1, -1), colors.white),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        
+        story.append(doc_table)
+        story.append(Spacer(1, 30))
+        
+        # Score Analysis Section
+        if latest_result.score_analysis:
+            story.append(Paragraph("Score Analysis", heading_style))
+            
+            score_data = latest_result.score_analysis
+            
+            # Overall score
+            if 'total_score' in score_data:
+                story.append(Paragraph(f"<b>Total Score:</b> {score_data['total_score']:.2f}", styles['Normal']))
+                story.append(Spacer(1, 10))
+            
+            # Score breakdown
+            if 'breakdown' in score_data:
+                breakdown_data = []
+                breakdown_data.append(['Category', 'Score', 'Max Score', 'Percentage'])
+                
+                for category, details in score_data['breakdown'].items():
+                    category_name = category.replace('_', ' ').title()
+                    score = f"{details.get('score', 0):.1f}"
+                    max_score = f"{details.get('max_score', 0):.1f}"
+                    percentage = f"{details.get('percentage', 0):.1f}%"
+                    breakdown_data.append([category_name, score, max_score, percentage])
+                
+                breakdown_table = Table(breakdown_data, colWidths=[2*inch, 1*inch, 1*inch, 1*inch])
+                breakdown_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                
+                story.append(breakdown_table)
+                story.append(Spacer(1, 20))
+        
+        # Risk Analysis Section - New Page
+        # Check both snake_case and camelCase for backward compatibility
+        risk_data = getattr(latest_result, 'risk_analysis', None) or getattr(latest_result, 'riskAnalysis', None)
+        if risk_data:
+            story.append(PageBreak())  # Start new page for risk analysis
+            story.append(Paragraph("Risk Analysis Report", heading_style))
+            
+            # Handle overall risk score (both formats)
+            overall_risk = risk_data.get('overallRiskScore') or risk_data.get('risk_score')
+            if overall_risk:
+                story.append(Paragraph(f"<b>Overall Risk Score:</b> {overall_risk}", styles['Normal']))
+                story.append(Spacer(1, 15))
+            
+            # Handle risk categories
+            risk_categories = risk_data.get('riskCategories') or risk_data.get('risk_categories', [])
+            if risk_categories:
+                story.append(Paragraph("<b>Risk Category Analysis:</b>", styles['Normal']))
+                story.append(Spacer(1, 10))
+                
+                for category in risk_categories:
+                    if isinstance(category, dict):
+                        category_name = category.get('categoryName', 'Unknown Category')
+                        score = category.get('score', 'N/A')
+                        findings = category.get('findings', [])
+                        
+                        story.append(Paragraph(f"<b>{category_name}</b> (Score: {score})", styles['Normal']))
+                        
+                        # Add findings as bullet points
+                        for finding in findings[:2]:  # Limit to top 2 findings per category
+                            # Truncate long findings
+                            if len(finding) > 200:
+                                finding = finding[:200] + "..."
+                            story.append(Paragraph(f"• {finding}", styles['Normal']))
+                        story.append(Spacer(1, 10))
+            
+            # Handle simple risk factors if present
+            risk_factors = risk_data.get('risk_factors')
+            if risk_factors and isinstance(risk_factors, list):
+                story.append(Paragraph("<b>Risk Factors:</b>", styles['Normal']))
+                for factor in risk_factors[:5]:  # Limit to top 5
+                    story.append(Paragraph(f"• {factor}", styles['Normal']))
+                story.append(Spacer(1, 10))
+        
+        # Enhanced Analysis Section
+        if 'analysis_type' in (latest_result.score_analysis or {}) and latest_result.score_analysis['analysis_type'] == 'enhanced':
+            story.append(PageBreak())
+            story.append(Paragraph("Enhanced AI Analysis", heading_style))
+            
+            # Helper function to format evidence
+            def format_evidence(evidence_text):
+                """Parse and format evidence text from JSON or plain text"""
+                import ast
+                import re
+                
+                # If evidence contains structured data (like section breakdown)
+                if "Section breakdown:" in evidence_text:
+                    try:
+                        # Extract the dictionary part
+                        dict_match = re.search(r'{.*}', evidence_text)
+                        if dict_match:
+                            dict_str = dict_match.group()
+                            # Safely evaluate the dictionary string
+                            section_data = ast.literal_eval(dict_str)
+                            
+                            formatted_points = []
+                            for section_name, section_info in section_data.items():
+                                if isinstance(section_info, dict):
+                                    found = section_info.get('found', 0)
+                                    total = section_info.get('total', 0)
+                                    percentage = int((found / total * 100)) if total > 0 else 0
+                                    formatted_points.append(f"{section_name}: {found}/{total} items found ({percentage}%)")
+                            return formatted_points
+                    except (ValueError, SyntaxError, KeyError):
+                        # If parsing fails, return the original text
+                        pass
+                
+                # For other evidence types, split by bullet points or return as-is
+                if '•' in evidence_text:
+                    return [point.strip() for point in evidence_text.split('•') if point.strip()]
+                elif evidence_text.startswith('"') and evidence_text.endswith('"'):
+                    return [evidence_text.strip('"')]
+                else:
+                    return [evidence_text]
+            
+            # Evidence section
+            if 'breakdown' in latest_result.score_analysis:
+                for category, details in latest_result.score_analysis['breakdown'].items():
+                    if 'evidence' in details and details['evidence']:
+                        category_name = category.replace('_', ' ').title()
+                        story.append(Paragraph(f"<b>{category_name} Evidence:</b>", styles['Normal']))
+                        
+                        # Process each evidence item
+                        evidence_count = 0
+                        for evidence_raw in details['evidence']:
+                            if evidence_count >= 5:  # Limit total evidence points per category
+                                break
+                                
+                            formatted_evidence = format_evidence(str(evidence_raw))
+                            for evidence_point in formatted_evidence:
+                                if evidence_count >= 5:
+                                    break
+                                # Truncate very long evidence points
+                                if len(evidence_point) > 150:
+                                    evidence_point = evidence_point[:150] + "..."
+                                story.append(Paragraph(f"• {evidence_point}", styles['Normal']))
+                                evidence_count += 1
+                        
+                        story.append(Spacer(1, 10))
+        
+        # Footer
+        story.append(Spacer(1, 30))
+        story.append(Paragraph("Generated by DPR Analysis System", styles['Normal']))
+        story.append(Paragraph(f"Report generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        
+        # Build PDF
+        doc.build(story)
+        
+        # Update archive access tracking if archived
+        if upload.is_archived:
+            update_archive_access(upload_id)
+        
+        # Send file
+        return send_file(
+            temp_file.name,
+            as_attachment=True,
+            download_name=f"{upload.original_filename.replace('.pdf', '')}_analysis_report.pdf",
+            mimetype='application/pdf'
+        )
+        
+    except Exception as e:
+        print(f"Error generating PDF report: {e}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Failed to generate PDF report: {str(e)}'}), 500
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
