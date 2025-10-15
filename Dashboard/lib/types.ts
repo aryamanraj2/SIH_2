@@ -1,4 +1,4 @@
-export type LanguageOption = "EN" | "HI" | "Regional"
+export type LanguageOption = "English" | "Hindi" | "Assamese" | "Bengali" | "Gujrati" | "Marathi" | "Kannada"
 
 export type DprStatus = "uploaded" | "processing" | "completed" | "failed" | "analyzed"
 

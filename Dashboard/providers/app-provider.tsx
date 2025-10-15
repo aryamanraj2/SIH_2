@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { createContext, useContext, useMemo, useState } from "react"
+import { createContext, useContext, useEffect, useMemo, useState } from "react"
 import type { DPRFile, ProcessingResult, LanguageOption } from "@/lib/types"
 import * as api from "@/lib/api"
 
@@ -11,6 +11,7 @@ type AppContextType = {
   dprs: DPRFile[]
   results: Record<string, ProcessingResult | undefined>
   defaultLanguage: LanguageOption
+  isMounted: boolean
   setDefaultLanguage: (lang: LanguageOption) => void
   login: (email: string) => void
   logout: () => void
@@ -30,7 +31,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [userEmail, setUserEmail] = useState<string | undefined>(undefined)
   const [dprs, setDprs] = useState<DPRFile[]>([])
   const [results, setResults] = useState<Record<string, ProcessingResult | undefined>>({})
-  const [defaultLanguage, setDefaultLanguage] = useState<LanguageOption>("EN")
+  const [defaultLanguage, setDefaultLanguage] = useState<LanguageOption>("English")
+  const [isMounted, setIsMounted] = useState(false)
+
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
 
   const value = useMemo<AppContextType>(() => {
     return {
@@ -39,6 +45,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       dprs,
       results,
       defaultLanguage,
+      isMounted,
       setDefaultLanguage,
       login: (email: string) => {
         setIsAuthenticated(true)
@@ -56,7 +63,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       exportExcel: api.exportExcel,
       getJSON: api.getJSON,
     }
-  }, [isAuthenticated, userEmail, dprs, results, defaultLanguage])
+  }, [isAuthenticated, userEmail, dprs, results, defaultLanguage, isMounted])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }

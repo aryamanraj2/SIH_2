@@ -35,9 +35,13 @@ export default function SettingsPage() {
                 <SelectValue placeholder="Select language" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="EN">EN</SelectItem>
-                <SelectItem value="HI">HI</SelectItem>
-                <SelectItem value="Regional">Regional</SelectItem>
+                <SelectItem value="English">English</SelectItem>
+                <SelectItem value="Hindi">Hindi</SelectItem>
+                <SelectItem value="Assamese">Assamese</SelectItem>
+                <SelectItem value="Bengali">Bengali</SelectItem>
+                <SelectItem value="Gujrati">Gujrati</SelectItem>
+                <SelectItem value="Marathi">Marathi</SelectItem>
+                <SelectItem value="Kannada">Kannada</SelectItem>
               </SelectContent>
             </Select>
           </div>

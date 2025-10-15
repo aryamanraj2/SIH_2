@@ -111,8 +111,8 @@ export function CategoryScoreCard({ title, result }: { title: string; result: En
               {config?.icon || <Target className="w-4 h-4" />}
             </div>
             <div className="flex-1 min-w-0">
-              <CardTitle className="text-base leading-snug">{title}</CardTitle>
-              <p className="text-xs text-gray-600 mt-1.5 leading-relaxed">
+              <CardTitle className="text-base leading-snug break-words">{title}</CardTitle>
+              <p className="text-xs text-gray-600 mt-1.5 leading-relaxed break-words">
                 {config?.description || 'DPR analysis category'}
               </p>
             </div>
@@ -122,7 +122,7 @@ export function CategoryScoreCard({ title, result }: { title: string; result: En
             className={`${methodConfig?.color || 'text-gray-600'} text-xs flex items-center gap-1 flex-shrink-0`}
           >
             <span className="text-xs">{methodConfig?.icon || '🔧'}</span>
-            <span className="hidden sm:inline text-xs">{methodConfig?.name || 'Analysis'}</span>
+            <span className="hidden sm:inline text-xs whitespace-nowrap">{methodConfig?.name || 'Analysis'}</span>
             <span className="sm:hidden text-xs">{(methodConfig?.name || 'Analysis').substring(0, 3)}</span>
           </Badge>
         </div>

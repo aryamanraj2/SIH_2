@@ -11,14 +11,21 @@ import { Button } from "@/components/ui/button"
 import { Upload, Archive, BarChart, Settings, LogOut, PanelLeftClose } from "lucide-react"
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
-  const { isAuthenticated, logout } = useApp()
+  const { isAuthenticated, logout, isMounted } = useApp()
   const router = useRouter()
   const pathname = usePathname()
   const [isCollapsed, setIsCollapsed] = useState(false)
 
   useEffect(() => {
-    if (!isAuthenticated) router.replace("/login")
-  }, [isAuthenticated, router])
+    if (isMounted && !isAuthenticated) {
+      router.replace("/login")
+    }
+  }, [isAuthenticated, router, isMounted])
+
+  // Show loading state until client has mounted
+  if (!isMounted) {
+    return <div className="min-h-dvh flex items-center justify-center">Loading...</div>
+  }
 
   return (
     <div
