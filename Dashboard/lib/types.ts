@@ -83,3 +83,89 @@ export interface ProcessingResult {
   risk: RiskPrediction
   recommendations: string[]
 }
+
+// Enhanced Analysis Types
+export interface EnhancedScoringResult {
+  score: number
+  max_score: number
+  percentage: number
+  evidence: string[]
+  confidence?: number
+  method_used: "spacy_nlp" | "semantic_analysis" | "gemini_qa" | "keyword_fallback" | "semantic_keyword_hybrid"
+}
+
+export interface EnhancedCapabilities {
+  nlp_available: boolean
+  semantic_available: boolean
+  gemini_available: boolean
+}
+
+export interface EnhancedAnalysisBreakdown {
+  completeness: EnhancedScoringResult
+  technical_quality: EnhancedScoringResult
+  gatishakti_alignment: EnhancedScoringResult
+  impact_sustainability: EnhancedScoringResult
+  compliance: EnhancedScoringResult
+}
+
+export interface EnhancedProcessingResult {
+  total_score: number
+  max_score: number
+  percentage: number
+  breakdown: EnhancedAnalysisBreakdown
+  analysis_type: "enhanced" | "basic"
+  capabilities: EnhancedCapabilities
+  processing_info?: {
+    text_length?: number
+    processing_timestamp?: string
+    pdf_path?: string
+  }
+  timestamp: string
+}
+
+export type AnalysisMethod = 
+  | "spacy_nlp" 
+  | "semantic_analysis" 
+  | "gemini_qa" 
+  | "keyword_fallback" 
+  | "semantic_keyword_hybrid"
+
+export interface MethodConfig {
+  name: string
+  color: string
+  icon: string
+  description: string
+}
+
+export const ANALYSIS_METHODS: Record<AnalysisMethod, MethodConfig> = {
+  spacy_nlp: {
+    name: "Advanced NLP",
+    color: "bg-blue-100 text-blue-800 border-blue-200",
+    icon: "🧠",
+    description: "spaCy-powered entity recognition and linguistic analysis"
+  },
+  semantic_analysis: {
+    name: "Semantic AI",
+    color: "bg-green-100 text-green-800 border-green-200",
+    icon: "🔍",
+    description: "Deep semantic similarity analysis using transformers"
+  },
+  gemini_qa: {
+    name: "Gemini Q&A",
+    color: "bg-purple-100 text-purple-800 border-purple-200",
+    icon: "✨",
+    description: "Google Gemini AI-powered question answering"
+  },
+  keyword_fallback: {
+    name: "Keyword Match",
+    color: "bg-gray-100 text-gray-800 border-gray-200",
+    icon: "🔤",
+    description: "Basic keyword and pattern matching"
+  },
+  semantic_keyword_hybrid: {
+    name: "Hybrid Analysis",
+    color: "bg-orange-100 text-orange-800 border-orange-200",
+    icon: "🔄",
+    description: "Combined semantic and keyword analysis"
+  }
+}
